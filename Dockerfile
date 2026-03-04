@@ -48,11 +48,11 @@ USER appuser
 RUN playwright install chromium
 
 # Espone la porta
-EXPOSE 8000
+EXPOSE 8020
 
 # Variabili d'ambiente
 ENV PYTHONUNBUFFERED=1
 ENV PLAYWRIGHT_BROWSERS_PATH=/home/appuser/.cache/ms-playwright
 
 # Comando di avvio
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8020", "--workers", "1"]
