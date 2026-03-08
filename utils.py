@@ -1,4 +1,5 @@
 from bs4 import BeautifulSoup
+import asyncio
 import time
 
 def parse_table(html):
@@ -18,44 +19,193 @@ from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 import os
 import re
 
+LOGIN_METHOD_SIELTE = "sielte"
+LOGIN_METHOD_CIE = "cie"
+LOGIN_METHOD_POSTE = "poste"
+
 async def login(page: Page):
+    """Dispatcher: sceglie il metodo di login in base a LOGIN_METHOD env var."""
+    login_method = os.getenv("LOGIN_METHOD", LOGIN_METHOD_SIELTE).lower().strip()
+    print(f"[LOGIN] Metodo di autenticazione selezionato: {login_method}")
+
+    if login_method == LOGIN_METHOD_CIE:
+        await _login_cie(page)
+    elif login_method == LOGIN_METHOD_POSTE:
+        await _login_poste(page)
+    elif login_method == LOGIN_METHOD_SIELTE:
+        await _login_sielte(page)
+    else:
+        raise ValueError(
+            f"LOGIN_METHOD '{login_method}' non valido. Usa 'sielte', 'cie' o 'poste'."
+        )
+
+    await _navigate_to_sister(page)
+
+
+async def _login_sielte(page: Page):
+    """SPID login via Sielte ID"""
     ade_username = os.getenv("ADE_USERNAME")
     ade_password = os.getenv("ADE_PASSWORD")
-    
+
     if not ade_username or not ade_password:
         raise ValueError("ADE_USERNAME and ADE_PASSWORD environment variables must be set")
-    
-    print("[LOGIN] Navigo alla pagina di login...")
+
+    print("[LOGIN SIELTE] Navigo alla pagina di login...")
     await page.goto("https://iampe.agenziaentrate.gov.it/sam/UI/Login?realm=/agenziaentrate")
-    print("[LOGIN] Clicco 'Entra con SPID'...")
+    print("[LOGIN SIELTE] Clicco 'Entra con SPID'...")
     await page.get_by_role("button", name="Entra con SPID").click()
-    print("[LOGIN] Clicco 'Sielte ID'...")
+    print("[LOGIN SIELTE] Clicco 'Sielte ID'...")
     await page.get_by_role("link", name="Sielte ID").click()
-    print("[LOGIN] Inserisco username...")
+    print("[LOGIN SIELTE] Inserisco username...")
     await page.get_by_role("textbox", name="Codice Fiscale / Partita IVA").press("CapsLock")
     await page.get_by_role("textbox", name="Codice Fiscale / Partita IVA").fill(ade_username)
-    print("[LOGIN] Inserisco password...")
+    print("[LOGIN SIELTE] Inserisco password...")
     await page.get_by_role("textbox", name="Password").click()
     await page.get_by_role("textbox", name="Password").fill(ade_password)
-    print("[LOGIN] Clicco 'Prosegui'...")
+    print("[LOGIN SIELTE] Clicco 'Prosegui'...")
     await page.get_by_role("button", name="Prosegui").click()
-    print("[LOGIN] Cerco link notifica (può non esserci)...")
+    print("[LOGIN SIELTE] Cerco link notifica (può non esserci)...")
     try:
         await page.get_by_role("link", name="Utilizza il le notifiche Ricevi una notifica sull'app MySielteID").click(timeout=4000)
-        print("[LOGIN] Cliccato link notifica (testo completo).")
+        print("[LOGIN SIELTE] Cliccato link notifica (testo completo).")
     except PlaywrightTimeoutError:
-        print("[LOGIN] Link notifica con testo completo non trovato, provo fallback...")
-        # Fallback: cerca <a> con alt="Utilizza il le notifiche" e <p> con testo 'Ricevi una notifica sull'app MySielteID'
+        print("[LOGIN SIELTE] Link notifica con testo completo non trovato, provo fallback...")
         try:
             await page.locator('a.link-sso:has(img[alt="Utilizza il le notifiche"]):has(p:text("Ricevi una notifica sull\'app MySielteID"))').click(timeout=4000)
-            print("[LOGIN] Cliccato link notifica (fallback DOM selector).")
+            print("[LOGIN SIELTE] Cliccato link notifica (fallback DOM selector).")
         except PlaywrightTimeoutError:
-            print("[LOGIN] Nessun link notifica trovato, stampo contenuto pagina per debug:")
+            print("[LOGIN SIELTE] Nessun link notifica trovato, stampo contenuto pagina per debug:")
             content = await page.content()
-            print("[LOGIN][DEBUG] HTML pagina:\n" + content)
-            print("[LOGIN] Continuo comunque.")
-    print("[LOGIN] Clicco 'Autorizza'...")
+            print("[LOGIN SIELTE][DEBUG] HTML pagina:\n" + content)
+            print("[LOGIN SIELTE] Continuo comunque.")
+    print("[LOGIN SIELTE] Clicco 'Autorizza'...")
     await page.get_by_role("button", name="Autorizza").click()
+    print("[LOGIN SIELTE] Autenticazione SPID/Sielte completata")
+
+
+async def _login_cie(page: Page):
+    """CIE (Carta d'Identità Elettronica) login with SMS OTP"""
+    ade_username = os.getenv("ADE_USERNAME")
+    ade_password = os.getenv("ADE_PASSWORD")
+
+    if not ade_username or not ade_password:
+        raise ValueError("ADE_USERNAME and ADE_PASSWORD environment variables must be set")
+
+    print("[LOGIN CIE] Navigo alla pagina di login...")
+    await page.goto("https://iampe.agenziaentrate.gov.it/sam/UI/Login?realm=/agenziaentrate")
+    await page.wait_for_load_state("networkidle", timeout=30000)
+
+    print("[LOGIN CIE] Clicco tab 'CIE'...")
+    await page.locator('a[href="#tab-2"][data-bs-toggle="tab"]').click()
+    await page.wait_for_timeout(500)
+
+    print("[LOGIN CIE] Clicco 'Entra con CIE'...")
+    await page.locator('a#cie-btn').click()
+    await page.wait_for_load_state("networkidle", timeout=30000)
+
+    print("[LOGIN CIE] Inserisco username...")
+    await page.locator("#username").fill(ade_username)
+
+    print("[LOGIN CIE] Inserisco password...")
+    await page.locator("#password").fill(ade_password)
+
+    print("[LOGIN CIE] Clicco 'Procedi'...")
+    await page.locator("form#loginUP button[type='submit']").click()
+    await page.wait_for_load_state("networkidle", timeout=30000)
+
+    print("[LOGIN CIE] Clicco 'Autorizza tramite SMS'...")
+    await page.locator("#sms_link").click()
+    await page.wait_for_load_state("networkidle", timeout=30000)
+
+    print("[LOGIN CIE] ========================================")
+    print("[LOGIN CIE]  SMS OTP inviato al tuo telefono!")
+    print("[LOGIN CIE]  Inserisci il codice di 4 cifre qui sotto")
+    print("[LOGIN CIE] ========================================")
+    otp_code = await asyncio.to_thread(
+        input, "[LOGIN CIE] Codice OTP (4 cifre): "
+    )
+    otp_code = otp_code.strip()
+
+    if len(otp_code) != 4 or not otp_code.isdigit():
+        raise ValueError(
+            f"Il codice OTP deve essere di 4 cifre numeriche, ricevuto: '{otp_code}'"
+        )
+
+    print("[LOGIN CIE] Inserisco codice OTP...")
+    for i, digit in enumerate(otp_code, 1):
+        await page.locator(f"#otp{i}").fill(digit)
+        await page.wait_for_timeout(150)
+
+    print("[LOGIN CIE] Attendo elaborazione OTP...")
+    await page.wait_for_timeout(3000)
+
+    # If the OTP form didn't auto-submit, submit it manually
+    try:
+        if await page.locator("#otpForm").count() > 0:
+            submit_btn = page.locator(
+                'form#otpForm button[type="submit"], '
+                'form#otpForm input[type="submit"]'
+            )
+            if await submit_btn.count() > 0:
+                await submit_btn.first.click()
+            else:
+                await page.locator("#otp4").press("Enter")
+            await page.wait_for_load_state("networkidle", timeout=30000)
+    except PlaywrightTimeoutError:
+        pass
+
+    print("[LOGIN CIE] Clicco 'Prosegui' sulla pagina di rilascio attributi...")
+    await page.locator('button[name="_eventId_proceed"]').click(timeout=30000)
+    await page.wait_for_load_state("networkidle", timeout=30000)
+    print("[LOGIN CIE] Autenticazione CIE completata")
+
+
+async def _login_poste(page: Page):
+    """SPID login via PosteID with app notification approval"""
+    ade_email = os.getenv("ADE_EMAIL")
+    ade_password = os.getenv("ADE_PASSWORD")
+
+    if not ade_email or not ade_password:
+        raise ValueError("ADE_EMAIL and ADE_PASSWORD environment variables must be set")
+
+    print("[LOGIN POSTE] Navigo alla pagina di login...")
+    await page.goto("https://iampe.agenziaentrate.gov.it/sam/UI/Login?realm=/agenziaentrate")
+
+    print("[LOGIN POSTE] Clicco 'Entra con SPID'...")
+    await page.get_by_role("button", name="Entra con SPID").click()
+
+    print("[LOGIN POSTE] Seleziono 'Poste ID'...")
+    await page.locator(
+        'a.dropdown-item[href="https://sp.agenziaentrate.gov.it/rp/poste/sel"]'
+    ).click()
+    await page.wait_for_load_state("networkidle", timeout=30000)
+
+    print("[LOGIN POSTE] Inserisco email...")
+    await page.locator("#username").fill(ade_email)
+
+    print("[LOGIN POSTE] Inserisco password...")
+    await page.locator("#password").fill(ade_password)
+
+    print("[LOGIN POSTE] Clicco 'ENTRA CON SPID'...")
+    await page.locator('button.btn-login[type="submit"]').click()
+    await page.wait_for_load_state("networkidle", timeout=30000)
+
+    print("[LOGIN POSTE] Clicco 'Voglio ricevere una notifica sull'App PosteID'...")
+    await page.locator('a:has-text("Voglio ricevere una notifica")').click()
+
+    print("[LOGIN POSTE] ========================================")
+    print("[LOGIN POSTE]  Approva la notifica sull'app PosteID")
+    print("[LOGIN POSTE]  (FaceID / Impronta digitale)")
+    print("[LOGIN POSTE]  In attesa... (max 2 minuti)")
+    print("[LOGIN POSTE] ========================================")
+
+    await page.get_by_role("button", name="Acconsento", exact=True).click(timeout=120000)
+    await page.wait_for_load_state("networkidle", timeout=30000)
+    print("[LOGIN POSTE] Autenticazione PosteID completata")
+
+
+async def _navigate_to_sister(page: Page):
+    """Post-authentication: search for SISTER and navigate into Visure Catastali"""
     print("[LOGIN] Cerco servizio SISTER...")
     await page.get_by_role("textbox", name="Cerca il servizio").click()
     await page.get_by_role("textbox", name="Cerca il servizio").fill("SISTER")
