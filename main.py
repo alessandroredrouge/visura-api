@@ -8,12 +8,15 @@ from datetime import datetime
 from typing import Optional, Dict
 from dataclasses import dataclass
 import time
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 from contextlib import asynccontextmanager
 from utils import login, run_visura, logout, extract_all_sezioni, run_visura_immobile
 from pydantic import BaseModel, Field, validator
+
+load_dotenv()
 
 # Configurazione logging
 log_level = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -111,15 +114,9 @@ class BrowserManager:
         try:
             playwright = await async_playwright().start()
             self.browser = await playwright.chromium.launch(
-                headless=True,  
+                headless=False,
                 args=[
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-gpu',
                     '--no-first-run',
-                    '--no-zygote',
-                    '--single-process',
                     '--disable-extensions'
                 ]
             )
